@@ -49,6 +49,8 @@ from .heat_conv import HEATConv
 from .hetero_conv import HeteroConv
 from .han_conv import HANConv
 from .lg_conv import LGConv
+from .dist_gcn_conv import DistGCNConv
+from .dist_gcn_conv_with_grad import DistGCNConvGrad
 
 __all__ = [
     'MessagePassing',
@@ -107,6 +109,8 @@ __all__ = [
     'HeteroConv',
     'HANConv',
     'LGConv',
+    'DistGCNConv',
+    'DistGCNConvGrad',
 ]
 
 classes = __all__
