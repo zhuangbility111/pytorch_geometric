@@ -134,6 +134,7 @@ def gcn_norm(local_edge_index, remote_edge_index,
         return all_edge_index, deg_inv_sqrt[src_nodes] * all_edge_weight * deg_inv_sqrt[dst_nodes]
 
 class Communicate_for_remote_feats(torch.autograd.Function):
+    '''
     @staticmethod
     def forward(ctx, local_node_feats, local_nodes_required_by_other, num_remote_nodes_on_part, local_range_nodes_on_part):
         num_local_nodes = local_node_feats.size(0)
@@ -144,21 +145,80 @@ class Communicate_for_remote_feats(torch.autograd.Function):
         num_part = num_remote_nodes_on_part.size(0)
         ctx.num_part = num_part
 
+        prepare_send_node_begin = time.perf_counter()
         # prepare node feats to send
         send_node_feats = []
         for indices in local_nodes_required_by_other:
             temp_node_feats = local_node_feats.index_select(0, indices)
             send_node_feats.append(temp_node_feats)
         
+        prepare_recv_node_begin = time.perf_counter()
         # send the local nodes' feature to other subgraphs and obtain the remote nodes' feature from other subgraphs
         recv_node_feats = [torch.zeros((num_remote_nodes_on_part[i], local_node_feats.size(-1)), dtype=torch.float32) for i in range(num_part)]
 
+
+        comm_begin = time.perf_counter()
         dist.all_to_all(recv_node_feats, send_node_feats)
         all_node_feats = local_node_feats
 
+        concatenate_begin = time.perf_counter()
         # add the remote_node_feats to all_node_feats
         for feats in recv_node_feats:
             all_node_feats = torch.cat((all_node_feats, feats), dim=0)
+
+        concatenate_end = time.perf_counter()
+        print('$$$$')
+        print("Time of prepare send data(ms): {}".format((prepare_recv_node_begin - prepare_send_node_begin) * 1000.0))
+        print("Time of prepare recv data(ms): {}".format((comm_begin - prepare_recv_node_begin) * 1000.0))
+        print("Time of comm data (all to all)(ms): {}".format((concatenate_begin - comm_begin) * 1000.0))
+        print("Time of concatenate data(ms): {}".format((concatenate_end - concatenate_begin) * 1000.0))
+        print('$$$$')
+
+        return all_node_feats
+    '''
+
+    @staticmethod
+    def forward(ctx, local_node_feats, local_nodes_required_by_other, num_remote_nodes_on_part, local_range_nodes_on_part):
+        num_local_nodes = local_node_feats.size(0)
+        ctx.local_nodes_required_by_other = local_nodes_required_by_other
+        ctx.num_remote_nodes_on_part = num_remote_nodes_on_part
+        ctx.local_range_nodes_on_part = local_range_nodes_on_part
+        ctx.num_local_nodes = num_local_nodes
+        num_part = num_remote_nodes_on_part.size(0)
+        ctx.num_part = num_part
+
+        prepare_send_node_begin = time.perf_counter()
+        local_nodes_indices_required_by_other = local_nodes_required_by_other[0]
+        # prepare node feats to send
+        for i in range(1, len(local_nodes_required_by_other)):
+            local_nodes_indices_required_by_other = torch.cat((local_nodes_indices_required_by_other, local_nodes_required_by_other[i]), dim=0)
+        send_node_feats = local_node_feats.index_select(0, local_nodes_indices_required_by_other)
+        # send_node_feats = torch.ones((local_nodes_indices_required_by_other.size(0), local_node_feats.size(-1)))
+        send_node_feats_splits = [indices.size(0) for indices in local_nodes_required_by_other]
+        
+        prepare_recv_node_begin = time.perf_counter()
+        # send the local nodes' feature to other subgraphs and obtain the remote nodes' feature from other subgraphs
+        # recv_node_feats = [torch.zeros((num_remote_nodes_on_part[i], local_node_feats.size(-1)), dtype=torch.float32) for i in range(num_part)]
+        num_remote_nodes = sum(num_remote_nodes_on_part)
+        recv_node_feats = torch.empty((num_remote_nodes, local_node_feats.size(-1)), dtype=torch.float32)
+        recv_node_feats_splits = num_remote_nodes_on_part.tolist()
+
+        comm_begin = time.perf_counter()
+        # dist.all_to_all(recv_node_feats, send_node_feats)
+        dist.all_to_all_single(recv_node_feats, send_node_feats, recv_node_feats_splits, send_node_feats_splits)
+        all_node_feats = local_node_feats
+
+        concatenate_begin = time.perf_counter()
+        # add the remote_node_feats to all_node_feats
+        all_node_feats = torch.cat((all_node_feats, recv_node_feats), dim=0)
+
+        concatenate_end = time.perf_counter()
+        print('$$$$')
+        print("Time of prepare send data(ms): {}".format((prepare_recv_node_begin - prepare_send_node_begin) * 1000.0))
+        print("Time of prepare recv data(ms): {}".format((comm_begin - prepare_recv_node_begin) * 1000.0))
+        print("Time of comm data (all to all)(ms): {}".format((concatenate_begin - comm_begin) * 1000.0))
+        print("Time of concatenate data(ms): {}".format((concatenate_end - concatenate_begin) * 1000.0))
+        print('$$$$')
 
         return all_node_feats
 
@@ -174,6 +234,9 @@ class Communicate_for_remote_feats(torch.autograd.Function):
             # print(grad_output.shape)
             # print(grad_output)
             grad_input = grad_output
+            print("grad_input:")
+            print(grad_input.shape)
+            print(grad_input)
             # prepare the node gradient to send
             send_node_grads = [grad_input[(num_local_nodes + local_range_nodes_on_part[i]):
                                     (num_local_nodes + local_range_nodes_on_part[i+1])] for i in range(num_part)]
@@ -364,6 +427,7 @@ class DistGCNConvGrad(MessagePassing):
         for feats in recv_node_feats:
             all_node_feats = torch.cat((all_node_feats, feats), dim=0)
         '''
+        comm_for_remote_feats_begin = time.perf_counter()
         all_node_feats = comm_for_remote_feats(local_node_feats, self.local_nodes_required_by_other,
                                                self.num_remote_nodes_on_part, self.local_range_nodes_on_part)
 
@@ -371,14 +435,25 @@ class DistGCNConvGrad(MessagePassing):
             local_adj_t = all_edge_index
             remote_adj_t = kwargs['remote_edge_index']
 
+            local_aggregate_begin = time.perf_counter()
             # local aggregation
             local_out = self.message_and_aggregate(local_adj_t, all_node_feats)
 
+            remote_aggregate_begin = time.perf_counter()
             # remote aggregation
             remote_out = self.message_and_aggregate(remote_adj_t, all_node_feats)
 
             if remote_adj_t.nnz() != 0:
-                return local_out + remote_out
+                combine_result_begin = time.perf_counter()
+                tmp_out = local_out + remote_out
+                combine_result_end = time.perf_counter()
+                print("##########")
+                print("Time of Communicate_for_remote_feats(ms): {}".format((local_aggregate_begin - comm_for_remote_feats_begin) * 1000.0))
+                print("Time of local aggregation(ms): {}".format((remote_aggregate_begin - local_aggregate_begin) * 1000.0))
+                print("Time of remote aggregation(ms): {}".format((combine_result_begin - remote_aggregate_begin) * 1000.0))
+                # print("Time of combine result(ms): {}".format((combine_result_end - combine_result_begin) * 1000.0))
+                print('##########')
+                return tmp_out
             else:
                 return local_out
 
@@ -398,6 +473,7 @@ class DistGCNConvGrad(MessagePassing):
     def forward(self, x: Tensor, local_edge_index: Adj, remote_edge_index: Adj, 
                 local_edge_weight: OptTensor = None, remote_edge_weight: OptTensor = None) -> Tensor:
         """"""
+        norm_begin = time.perf_counter()
         if self.normalize:
             if isinstance(local_edge_index, Tensor):
                 cache_edge_index = self._cached_edge_index
@@ -444,8 +520,12 @@ class DistGCNConvGrad(MessagePassing):
                     edge_index = cache
                 '''
 
+        linear_begin = time.perf_counter()
+
         # neural operation on nodes
         x = self.lin(x)
+
+        propagate_begin = time.perf_counter()
 
         if isinstance(local_edge_index, Tensor):
             out = self.propagate(all_edge_index, x=x, edge_weight=all_edge_weight, size=None)
@@ -453,9 +533,19 @@ class DistGCNConvGrad(MessagePassing):
             out = self.propagate(local_edge_index, x=x, remote_edge_index=remote_edge_index, size=None)
 
         # print(out.grad_fn)
+        add_bias_begin = time.perf_counter()
 
         if self.bias is not None:
             out += self.bias
+
+        add_bias_end = time.perf_counter()
+        print("**************")
+        # print("Time of norm(ms): {}".format((linear_begin - norm_begin) * 1000.0))
+        print("Time of linear(ms): {}".format((propagate_begin -linear_begin) * 1000.0))
+        print("Time of propagate(ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
+        # print("Time of add_bias(ms): {}".format((add_bias_end - add_bias_begin) * 1000.0))
+        print("Time of 1 dist conv forward(ms): {}".format((add_bias_end - norm_begin) * 1000.0))
+        print("**************")
 
         return out
 
