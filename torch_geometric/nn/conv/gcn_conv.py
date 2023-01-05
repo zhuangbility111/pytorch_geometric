@@ -4,7 +4,8 @@ import torch
 from torch import Tensor
 from torch.nn import Parameter
 from torch_scatter import scatter_add
-from torch_sparse import SparseTensor, fill_diag, matmul, mul
+# from torch_sparse import SparseTensor, fill_diag, matmul, mul
+from torch_sparse import SparseTensor, fill_diag, matmul, mul, matmul_with_cached_transposed
 from torch_sparse import sum as sparsesum
 
 from torch_geometric.nn.conv import MessagePassing
@@ -164,7 +165,6 @@ class GCNConv(MessagePassing):
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_weight: OptTensor = None) -> Tensor:
         """"""
-
         if self.normalize:
             if isinstance(edge_index, Tensor):
                 cache = self._cached_edge_index
@@ -204,3 +204,4 @@ class GCNConv(MessagePassing):
 
     def message_and_aggregate(self, adj_t: SparseTensor, x: Tensor) -> Tensor:
         return matmul(adj_t, x, reduce=self.aggr)
+        # return matmul_with_cached_transposed(adj_t, x, reduce=self.aggr)
