@@ -125,12 +125,12 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_indices_required
                                   recv_nodes_feat_buf, send_nodes_feat_buf):
 
     prepare_send_node_begin = time.perf_counter()
-    # send_node_feats = local_nodes_feat.index_select(0, local_nodes_indices_required_by_other)
+    # send_nodes_feat_buf = local_nodes_feat.index_select(0, local_nodes_indices_required_by_other)
     torch.index_select(local_nodes_feat, 0, local_nodes_indices_required_by_other, out=send_nodes_feat_buf)
 
     prepare_recv_node_begin = time.perf_counter()
     # send the local nodes' feature to other subgraphs and obtain the remote nodes' feature from other subgraphs
-    # recv_node_feats = torch.empty((sum(recv_node_feats_splits), local_nodes_feat.size(-1)), dtype=torch.float32)
+    # recv_nodes_feat_buf = torch.empty((sum(recv_node_feats_splits), local_nodes_feat.size(-1)), dtype=torch.float32)
     # recv_node_feats = torch.zeros((sum(recv_node_feats_splits), local_nodes_feat.size(-1)), dtype=torch.float32)
     '''
     print("send_node_feats_splits:")
@@ -201,6 +201,15 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         ctx.local_node_splits = local_node_splits
         ctx.send_nodes_feat_buf = send_nodes_feat_buf
         ctx.recv_nodes_feat_buf = recv_nodes_feat_buf
+
+        num_recv_nodes = sum(remote_node_splits)
+        num_send_nodes = sum(local_node_splits)
+        '''
+        for tmp_tensor in local_nodes_required_by_other:
+            num_send_nodes += tmp_tensor.size(0)
+        '''
+        send_nodes_feat_buf.resize_(num_send_nodes, local_nodes_feat.size(-1))
+        recv_nodes_feat_buf.resize_(num_recv_nodes, local_nodes_feat.size(-1))
 
         comm_begin = time.perf_counter()
         # communicate for remote nodes feat
@@ -281,6 +290,13 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             # remote_nodes_grad = torch.zeros([remote_adj_t.sparse_size(-1), local_out_grad.size(-1)], dtype=torch.float)
             remote_nodes_grad_buf = ctx.recv_nodes_feat_buf
             local_nodes_grad_buf = ctx.send_nodes_feat_buf
+
+            num_send_nodes = sum(remote_node_splits)
+            num_recv_nodes = sum(local_node_splits)
+
+            remote_nodes_grad_buf.resize_(num_send_nodes, local_out_grad.size(-1))
+            local_nodes_grad_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
+
             remote_nodes_grad_buf.zero_()
             SPMM_backward(remote_adj_t, local_out_grad, remote_nodes_grad_buf)
 
@@ -326,6 +342,8 @@ class DistGCNConvGrad(MessagePassing):
                  local_nodes_required_by_other: Tensor, remote_nodes: Tensor,
                  num_remote_nodes_from_part: Tensor, local_range_nodes_on_part: Tensor,
                  rank: int, num_part: int,
+                 send_nodes_feat_buf: Tensor,
+                 recv_nodes_feat_buf: Tensor,
                  improved: bool = False, cached: bool = False,
                  add_self_loops: bool = True, normalize: bool = True,
                  bias: bool = True, **kwargs):
@@ -351,6 +369,7 @@ class DistGCNConvGrad(MessagePassing):
         self._cached_edge_index = None
         self._cached_adj_t = None
 
+        '''
         # pre allocate memory buffer for saving the output of remote communication
         num_recv_nodes = remote_nodes.size(0)
         self.recv_nodes_feat_buf = torch.zeros((num_recv_nodes, out_channels), dtype=torch.float32)
@@ -362,6 +381,9 @@ class DistGCNConvGrad(MessagePassing):
             num_send_nodes += tmp_tensor.size(0)
         self.send_nodes_feat_buf = torch.zeros((num_send_nodes, out_channels), dtype=torch.float32)
         # self.send_nodes_feat_buf = torch.empty((num_send_nodes, out_channels), dtype=torch.float32)
+        '''
+        self.send_nodes_feat_buf = send_nodes_feat_buf
+        self.recv_nodes_feat_buf = recv_nodes_feat_buf
 
         self.lin = Linear(in_channels, out_channels, bias=False,
                           weight_initializer='glorot')
