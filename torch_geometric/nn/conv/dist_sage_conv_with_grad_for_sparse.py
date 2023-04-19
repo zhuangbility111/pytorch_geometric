@@ -40,10 +40,10 @@ def get_deg(local_edge_index, remote_edge_index, add_self_loops=False):
         local_adj_t = local_edge_index
         remote_adj_t = remote_edge_index
         if not local_adj_t.has_value():
-            local_adj_t = local_adj_t.fill_value(1., dtype=dtype)
+            local_adj_t = local_adj_t.fill_value(1.)
 
         if not remote_adj_t.has_value():
-            remote_adj_t = remote_adj_t.fill_value(1., dtype=dtype)
+            remote_adj_t = remote_adj_t.fill_value(1.)
 
         if add_self_loops:
             local_adj_t = fill_diag(local_adj_t, 1.)
@@ -80,10 +80,10 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_indices_required
     '''
 
     barrier_begin = time.perf_counter()
-    # dist.barrier()
+    dist.barrier()
     comm_begin = time.perf_counter()
     # handle = dist.all_to_all_single(recv_node_feats, send_node_feats, recv_node_feats_splits, send_node_feats_splits, async_op=True)
-    dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits)
+    handle = dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
     comm_end = time.perf_counter()
 
     print('$$$$')
@@ -94,7 +94,8 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_indices_required
     print('$$$$')
 
     # return recv_node_feats, handle
-    return None
+    # return None
+    return handle
 
 def comm_for_remote_nodes_backward(recv_nodes_grad_buf, send_nodes_grad_buf,
                                    recv_nodes_grad_splits, send_nodes_grad_splits):
@@ -106,11 +107,12 @@ def comm_for_remote_nodes_backward(recv_nodes_grad_buf, send_nodes_grad_buf,
 
     # handle = dist.all_to_all_single(recv_node_grads, send_node_grads, recv_node_grads_splits, send_node_grads_splits, async_op=True)
     # dist.all_to_all_single(recv_node_grads, send_node_grads, recv_node_grads_splits, send_node_grads_splits)
-    dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits)
+    handle = dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
 
     # return recv_node_grads, handle
     # return recv_node_grads
-    return None
+    # return None
+    return handle
 
 class Aggregate_for_local_and_remote(torch.autograd.Function):
     @staticmethod
@@ -158,7 +160,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                                             remote_node_splits, local_node_splits)
         '''
         send_nodes_feat_buf.zero_()
-        comm_for_remote_nodes_forward(local_nodes_feat, 
+        handle = comm_for_remote_nodes_forward(local_nodes_feat, 
                                       local_nodes_indices_required_by_other,
                                       remote_node_splits, local_node_splits,
                                       recv_nodes_feat_buf, send_nodes_feat_buf)
@@ -170,7 +172,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         SPMM_forward(local_adj_t, local_nodes_feat, out)
 
         async_wait_begin = time.perf_counter()
-        # comm_handle.wait()
+        handle.wait()
 
         remote_aggregate_begin = time.perf_counter()
         remote_nodes_feat = recv_nodes_feat_buf
@@ -248,7 +250,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             local_nodes_grad_from, comm_handle = comm_for_remote_nodes_backward(remote_nodes_grad,
                                                                                 local_node_splits, remote_node_splits)
             '''
-            comm_for_remote_nodes_backward(local_nodes_grad_buf, remote_nodes_grad_buf,
+            handle = comm_for_remote_nodes_backward(local_nodes_grad_buf, remote_nodes_grad_buf,
                                            local_node_splits, remote_node_splits)
             
             # scatter gradient to local nodes
@@ -257,6 +259,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             SPMM_backward(local_adj_t, local_out_grad, local_nodes_grad)
 
             # comm_handle.wait()
+            handle.wait()
             # then accumulate the local node grads
             local_nodes_grad_from = local_nodes_grad_buf
             local_nodes_grad.index_add_(dim=0, index=local_nodes_indices_required_by_other,
