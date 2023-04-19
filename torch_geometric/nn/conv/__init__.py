@@ -52,6 +52,9 @@ from .lg_conv import LGConv
 from .dist_gcn_conv import DistGCNConv
 # from .dist_gcn_conv_with_grad import DistGCNConvGrad
 from .dist_gcn_conv_with_grad_for_sparse import DistGCNConvGrad
+from .dist_sage_conv_with_grad_for_sparse import DistSAGEConvGrad
+from .dist_sage_conv_with_grad_for_sparse_pre_post import DistributedGraph, DistSAGEConvGradWithPrePost 
+from .dist_sage_conv_with_grad_for_sparse_pre import DistributedGraphPre, DistSAGEConvGradWithPre 
 
 __all__ = [
     'MessagePassing',
@@ -112,6 +115,11 @@ __all__ = [
     'LGConv',
     'DistGCNConv',
     'DistGCNConvGrad',
+    'DistSAGEConvGrad',
+    'DistributedGraph', 
+    'DistSAGEConvGradWithPrePost',
+    'DistributedGraphPre', 
+    'DistSAGEConvGradWithPre',
 ]
 
 classes = __all__
