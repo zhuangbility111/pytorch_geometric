@@ -56,22 +56,28 @@ def get_deg(local_edge_index, remote_edge_index, add_self_loops=False):
     
 def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_other, 
                                   recv_nodes_feat_splits, send_nodes_feat_splits,
-                                  recv_nodes_feat_buf, send_nodes_feat_buf):
+                                  recv_nodes_feat_buf, send_nodes_feat_buf,
+                                  recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf):
 
     prepare_send_node_begin = time.perf_counter()
     # send_nodes_feat_buf = local_nodes_feat.index_select(0, local_nodes_indices_required_by_other)
     torch.index_select(local_nodes_feat, 0, local_nodes_required_by_other, out=send_nodes_feat_buf)
 
     prepare_recv_node_begin = time.perf_counter()
-    # send the local nodes' feature to other subgraphs and obtain the remote nodes' feature from other subgraphs
-    # recv_nodes_feat_buf = torch.empty((sum(recv_node_feats_splits), local_nodes_feat.size(-1)), dtype=torch.float32)
-    # recv_node_feats = torch.zeros((sum(recv_node_feats_splits), local_nodes_feat.size(-1)), dtype=torch.float32)
 
     barrier_begin = time.perf_counter()
     dist.barrier()
     comm_begin = time.perf_counter()
     # handle = dist.all_to_all_single(recv_node_feats, send_node_feats, recv_node_feats_splits, send_node_feats_splits, async_op=True)
-    handle = dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
+    if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
+        # convert communication data to fp16
+        send_nodes_feat_fp16_buf.copy_(send_nodes_feat_buf)
+        # handle = dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
+        dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
+    else:
+        # handle = dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
+        dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
+
     comm_end = time.perf_counter()
 
     print('$$$$')
@@ -82,31 +88,31 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
     print('$$$$')
 
     # return recv_node_feats, handle
-    # return None
-    return handle
+    return None
+    # return handle
 
 def comm_for_remote_nodes_backward(recv_nodes_grad_buf, send_nodes_grad_buf,
-                                   recv_nodes_grad_splits, send_nodes_grad_splits):
-    # prepare the node gradient to send
-    # send_nodes_grad = remote_nodes_grad
-    
-    # allocate memory to save the local node grads from other subgraph
-    # recv_node_grads = torch.empty((sum(recv_node_grads_splits), remote_nodes_grad.size(-1)), dtype=torch.float32)
-
-    # handle = dist.all_to_all_single(recv_node_grads, send_node_grads, recv_node_grads_splits, send_node_grads_splits, async_op=True)
+                                   recv_nodes_grad_splits, send_nodes_grad_splits,
+                                   recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf):
     # dist.all_to_all_single(recv_node_grads, send_node_grads, recv_node_grads_splits, send_node_grads_splits)
-    handle = dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
+    if recv_nodes_grad_fp16_buf is not None and send_nodes_grad_fp16_buf is not None:
+        # convert communication data to fp16
+        send_nodes_grad_fp16_buf.copy_(send_nodes_grad_buf)
+        # handle = dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
+        dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
+    else:
+        # handle = dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
+        dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
 
     # return recv_node_grads, handle
-    # return recv_node_grads
-    # return None
-    return handle
+    # return handle
+    return None
 
 class Aggregate_for_local_and_remote(torch.autograd.Function):
     @staticmethod
     def forward(ctx, local_adj_t, remote_adj_t, local_nodes_feat, 
                 local_nodes_required_by_other, num_local_nodes_required_by_other, num_remote_nodes_from_part,
-                send_nodes_feat_buf, recv_nodes_feat_buf):
+                send_nodes_feat_buf, recv_nodes_feat_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_fp16_buf):
         ctx.local_nodes_required_by_other = local_nodes_required_by_other
         ctx.local_adj_t = local_adj_t
         ctx.remote_adj_t = remote_adj_t
@@ -119,10 +125,17 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         ctx.send_nodes_feat_buf = send_nodes_feat_buf
         ctx.recv_nodes_feat_buf = recv_nodes_feat_buf
 
+        ctx.send_nodes_feat_fp16_buf = send_nodes_feat_fp16_buf
+        ctx.recv_nodes_feat_fp16_buf = recv_nodes_feat_fp16_buf
+
         num_recv_nodes = sum(remote_node_splits)
         num_send_nodes = sum(local_node_splits)
         send_nodes_feat_buf.resize_(num_send_nodes, local_nodes_feat.size(-1))
         recv_nodes_feat_buf.resize_(num_recv_nodes, local_nodes_feat.size(-1))
+
+        if send_nodes_feat_fp16_buf is not None and recv_nodes_feat_fp16_buf is not None:
+            send_nodes_feat_fp16_buf.resize_(num_send_nodes, local_nodes_feat.size(-1))
+            recv_nodes_feat_fp16_buf.resize_(num_recv_nodes, local_nodes_feat.size(-1))
 
         comm_begin = time.perf_counter()
         # communicate for remote nodes feat
@@ -140,7 +153,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         handle = comm_for_remote_nodes_forward(local_nodes_feat, 
                                       local_nodes_required_by_other,
                                       remote_node_splits, local_node_splits,
-                                      recv_nodes_feat_buf, send_nodes_feat_buf)
+                                      recv_nodes_feat_buf, send_nodes_feat_buf,
+                                      recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf)
         
         local_aggregate_begin = time.perf_counter()
         out = torch.zeros([local_adj_t.sparse_size(0), local_nodes_feat.size(-1)], dtype=torch.float)
@@ -149,7 +163,11 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         SPMM_forward(local_adj_t, local_nodes_feat, out)
 
         async_wait_begin = time.perf_counter()
-        handle.wait()
+        # handle.wait()
+
+        if send_nodes_feat_fp16_buf is not None and recv_nodes_feat_fp16_buf is not None:
+            # convert communication data to fp32
+            recv_nodes_feat_buf.copy_(recv_nodes_feat_fp16_buf)
 
         remote_aggregate_begin = time.perf_counter()
         remote_nodes_feat = recv_nodes_feat_buf
@@ -194,11 +212,18 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             remote_nodes_grad_buf = ctx.recv_nodes_feat_buf
             local_nodes_grad_buf = ctx.send_nodes_feat_buf
 
+            remote_nodes_grad_fp16_buf = ctx.recv_nodes_feat_fp16_buf
+            local_nodes_grad_fp16_buf = ctx.send_nodes_feat_fp16_buf
+
             num_send_nodes = sum(remote_node_splits)
             num_recv_nodes = sum(local_node_splits)
 
             remote_nodes_grad_buf.resize_(num_send_nodes, local_out_grad.size(-1))
             local_nodes_grad_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
+
+            if remote_nodes_grad_fp16_buf is not None and local_nodes_grad_fp16_buf is not None:
+                remote_nodes_grad_fp16_buf.resize_(num_send_nodes, local_out_grad.size(-1))
+                local_nodes_grad_fp16_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
 
             remote_nodes_grad_buf.zero_()
             SPMM_backward(remote_adj_t, local_out_grad, remote_nodes_grad_buf)
@@ -209,7 +234,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                                                                                 local_node_splits, remote_node_splits)
             '''
             handle = comm_for_remote_nodes_backward(local_nodes_grad_buf, remote_nodes_grad_buf,
-                                           local_node_splits, remote_node_splits)
+                                                    local_node_splits, remote_node_splits, 
+                                                    local_nodes_grad_fp16_buf, remote_nodes_grad_fp16_buf)
             
             # scatter gradient to local nodes
             # local_nodes_grad = SPMM_backward(local_adj_t, local_out_grad)
@@ -217,20 +243,25 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             SPMM_backward(local_adj_t, local_out_grad, local_nodes_grad)
 
             # comm_handle.wait()
-            handle.wait()
+            # handle.wait()
+
+            if remote_nodes_grad_fp16_buf is not None and local_nodes_grad_fp16_buf is not None:
+                # convert communication data to fp32
+                local_nodes_grad_buf.copy_(local_nodes_grad_fp16_buf)
+
             # then accumulate the local node grads
             local_nodes_grad_from = local_nodes_grad_buf
             local_nodes_grad.index_add_(dim=0, index=local_nodes_required_by_other,
                                         source=local_nodes_grad_from)
 
-        return None, None, local_nodes_grad, None, None, None, None, None
+        return None, None, local_nodes_grad, None, None, None, None, None, None, None
 
 def aggregate_for_local_and_remote(local_adj_t, remote_adj_t, local_nodes_feat, 
                 local_nodes_required_by_other, num_local_nodes_required_by_other, num_remote_nodes_from_part,
-                send_nodes_feat_buf, recv_nodes_feat_buf):
+                send_nodes_feat_buf, recv_nodes_feat_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_fp16_buf):
     return Aggregate_for_local_and_remote.apply(local_adj_t, remote_adj_t, local_nodes_feat, 
                 local_nodes_required_by_other, num_local_nodes_required_by_other, num_remote_nodes_from_part,
-                send_nodes_feat_buf, recv_nodes_feat_buf)
+                send_nodes_feat_buf, recv_nodes_feat_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_fp16_buf)
 
 class DistSAGEConvGrad(MessagePassing):
     def __init__(self, in_channels: int, out_channels: int,
@@ -240,6 +271,8 @@ class DistSAGEConvGrad(MessagePassing):
                  rank: int, num_part: int,
                  send_nodes_feat_buf: Tensor,
                  recv_nodes_feat_buf: Tensor,
+                 send_nodes_feat_fp16_buf: Tensor,
+                 recv_nodes_feat_fp16_buf: Tensor,
                  add_self_loops: bool = False, normalize: bool = True,
                  bias: bool = True, **kwargs):
 
@@ -263,6 +296,9 @@ class DistSAGEConvGrad(MessagePassing):
 
         self.send_nodes_feat_buf = send_nodes_feat_buf
         self.recv_nodes_feat_buf = recv_nodes_feat_buf
+
+        self.send_nodes_feat_fp16_buf = send_nodes_feat_fp16_buf
+        self.recv_nodes_feat_fp16_buf = recv_nodes_feat_fp16_buf
 
         self.lin = Linear(in_channels, out_channels, bias=False,
                           weight_initializer='glorot')
@@ -291,7 +327,8 @@ class DistSAGEConvGrad(MessagePassing):
             local_out = aggregate_for_local_and_remote(local_adj_t, remote_adj_t, local_nodes_feat, 
                                             self.local_nodes_required_by_other, self.num_local_nodes_required_by_other,
                                             self.num_remote_nodes_from_part,
-                                            self.send_nodes_feat_buf, self.recv_nodes_feat_buf)
+                                            self.send_nodes_feat_buf, self.recv_nodes_feat_buf,
+                                            self.send_nodes_feat_fp16_buf, self.recv_nodes_feat_fp16_buf)
             propagate_end = time.perf_counter()
             print("Time of propagate(inner)(ms) = {}".format((propagate_end - propagate_begin) * 1000.0))
 
