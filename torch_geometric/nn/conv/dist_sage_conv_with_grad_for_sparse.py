@@ -72,11 +72,11 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
     if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
         # convert communication data to fp16
         send_nodes_feat_fp16_buf.copy_(send_nodes_feat_buf)
-        # handle = dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
-        dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
+        handle = dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
+        # dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
     else:
-        # handle = dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
-        dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
+        handle = dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
+        # dist.all_to_all_single(recv_nodes_feat_buf, send_nodes_feat_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
 
     comm_end = time.perf_counter()
 
@@ -88,8 +88,8 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
     print('$$$$')
 
     # return recv_node_feats, handle
-    return None
-    # return handle
+    # return None
+    return handle
 
 def comm_for_remote_nodes_backward(recv_nodes_grad_buf, send_nodes_grad_buf,
                                    recv_nodes_grad_splits, send_nodes_grad_splits,
@@ -98,15 +98,15 @@ def comm_for_remote_nodes_backward(recv_nodes_grad_buf, send_nodes_grad_buf,
     if recv_nodes_grad_fp16_buf is not None and send_nodes_grad_fp16_buf is not None:
         # convert communication data to fp16
         send_nodes_grad_fp16_buf.copy_(send_nodes_grad_buf)
-        # handle = dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
-        dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
+        handle = dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
+        # dist.all_to_all_single(recv_nodes_grad_fp16_buf, send_nodes_grad_fp16_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
     else:
-        # handle = dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
-        dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
+        handle = dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=True)
+        # dist.all_to_all_single(recv_nodes_grad_buf, send_nodes_grad_buf, recv_nodes_grad_splits, send_nodes_grad_splits, async_op=False)
 
     # return recv_node_grads, handle
-    # return handle
-    return None
+    return handle
+    # return None
 
 class Aggregate_for_local_and_remote(torch.autograd.Function):
     @staticmethod
@@ -163,7 +163,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         SPMM_forward(local_adj_t, local_nodes_feat, out)
 
         async_wait_begin = time.perf_counter()
-        # handle.wait()
+        handle.wait()
 
         if send_nodes_feat_fp16_buf is not None and recv_nodes_feat_fp16_buf is not None:
             # convert communication data to fp32
@@ -243,7 +243,7 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             SPMM_backward(local_adj_t, local_out_grad, local_nodes_grad)
 
             # comm_handle.wait()
-            # handle.wait()
+            handle.wait()
 
             if remote_nodes_grad_fp16_buf is not None and local_nodes_grad_fp16_buf is not None:
                 # convert communication data to fp32
