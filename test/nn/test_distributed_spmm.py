@@ -342,14 +342,14 @@ def test_distributed_sage_conv_grad(input_dir, graph_name):
 
     # ------ test backward ------
     print("run distributed sage conv's backward function")
-    grad_out = torch.randn_like(ref_out)
+    grad_out = torch.ones_like(ref_out)
     ref_out.backward(grad_out)
     # expected_grad_value = value.grad
     # value.grad = None
     expected_grad_other = global_feats.grad
     print("rank = {}, expected_grad_other = {}".format(rank, expected_grad_other))
 
-    grad_out = torch.randn_like(out)
+    grad_out = torch.ones_like(out)
     out.backward(grad_out)
     grad_other = local_feats.grad
     print("rank = {}, grad_other = {}".format(rank, grad_other))
