@@ -51,11 +51,14 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
 
     barrier_begin = time.perf_counter()
     dist.barrier()
+
     comm_begin = time.perf_counter()
     # handle = dist.all_to_all_single(recv_node_feats, send_node_feats, recv_node_feats_splits, send_node_feats_splits, async_op=True)
     if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
         # convert communication data to fp16
+        transform_begin = time.perf_counter()
         send_nodes_feat_fp16_buf.copy_(send_nodes_feat_buf)
+        transform_end = time.perf_counter()
         handle = dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=True)
         # dist.all_to_all_single(recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf, recv_nodes_feat_splits, send_nodes_feat_splits, async_op=False)
     else:
@@ -67,6 +70,8 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
     print('$$$$')
     print("Time of prepare send data(ms): {}".format((prepare_recv_node_begin - prepare_send_node_begin) * 1000.0))
     print("Time of prepare recv data(ms): {}".format((barrier_begin - prepare_recv_node_begin) * 1000.0))
+    if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
+        print("transform data to fp16(ms): {}".format((transform_end - transform_begin) * 1000.0))
     print("Time of barrier (all to all)(ms): {}".format((comm_begin - barrier_begin) * 1000.0))
     print("Time of comm data (all to all)(ms): {}".format((comm_end - comm_begin) * 1000.0))
     print('$$$$')
@@ -134,20 +139,25 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                                             remote_node_splits, local_node_splits)
         '''
         send_nodes_feat_buf.zero_()
-        handle = comm_for_remote_nodes_forward(local_nodes_feat, 
-                                      local_nodes_required_by_other,
-                                      remote_node_splits, local_node_splits,
-                                      recv_nodes_feat_buf, send_nodes_feat_buf,
-                                      recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf)
+        if num_send_nodes > 0 and num_recv_nodes > 0:
+            handle = comm_for_remote_nodes_forward(local_nodes_feat, 
+                                        local_nodes_required_by_other,
+                                        remote_node_splits, local_node_splits,
+                                        recv_nodes_feat_buf, send_nodes_feat_buf,
+                                        recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf)
+        else:
+            handle = None
         
-        local_aggregate_begin = time.perf_counter()
+        allocate_out_begin = time.perf_counter()
         out = torch.zeros([local_adj_t.sparse_size(0), local_nodes_feat.size(-1)], dtype=torch.float)
+        local_aggregate_begin = time.perf_counter()
         # aggregate message from local nodes
         # local_out = SPMM_forward(local_adj_t, local_nodes_feat)
         SPMM_forward(local_adj_t, local_nodes_feat, out)
 
         async_wait_begin = time.perf_counter()
-        handle.wait()
+        if handle is not None:
+            handle.wait()
 
         if send_nodes_feat_fp16_buf is not None and recv_nodes_feat_fp16_buf is not None:
             # convert communication data to fp32
@@ -157,7 +167,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
         remote_nodes_feat = recv_nodes_feat_buf
         # aggregate message from remote nodes
         # remote_out = SPMM_forward(remote_adj_t, remote_nodes_feat)
-        SPMM_forward(remote_adj_t, remote_nodes_feat, out)
+        if remote_nodes_feat.size(0) != 0:
+            SPMM_forward(remote_adj_t, remote_nodes_feat, out)
 
         sum_message_begin = time.perf_counter()
         # then sum up the message
@@ -170,7 +181,8 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
         print('#########')
         print("Time of prepare comm_forward(ms): {}".format((comm_begin - prepare_comm_begin) * 1000.0))
-        print("Time of comm_forward(ms): {}".format((local_aggregate_begin - comm_begin) * 1000.0))
+        print("Time of comm_forward(ms): {}".format((allocate_out_begin - comm_begin) * 1000.0))
+        print("Time of allocate out(ms): {}".format((local_aggregate_begin - allocate_out_begin) * 1000.0))
         print("Time of local aggregate(ms): {}".format((async_wait_begin - local_aggregate_begin) * 1000.0))
         print("Time of async wait(ms): {}".format((remote_aggregate_begin - async_wait_begin) * 1000.0))
         print("Time of remote aggregate(ms): {}".format((sum_message_begin - remote_aggregate_begin) * 1000.0))
@@ -210,16 +222,20 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                 local_nodes_grad_fp16_buf.resize_(num_recv_nodes, local_out_grad.size(-1))
 
             remote_nodes_grad_buf.zero_()
-            SPMM_backward(remote_adj_t, local_out_grad, remote_nodes_grad_buf)
+            if remote_nodes_grad_buf.size(0) != 0:
+                SPMM_backward(remote_adj_t, local_out_grad, remote_nodes_grad_buf)
 
             # communicate to obtain the local node grads from other subgraph
             '''
             local_nodes_grad_from, comm_handle = comm_for_remote_nodes_backward(remote_nodes_grad,
                                                                                 local_node_splits, remote_node_splits)
             '''
-            handle = comm_for_remote_nodes_backward(local_nodes_grad_buf, remote_nodes_grad_buf,
-                                                    local_node_splits, remote_node_splits, 
-                                                    local_nodes_grad_fp16_buf, remote_nodes_grad_fp16_buf)
+            if num_send_nodes != 0 and num_recv_nodes != 0:
+                handle = comm_for_remote_nodes_backward(local_nodes_grad_buf, remote_nodes_grad_buf,
+                                                        local_node_splits, remote_node_splits, 
+                                                        local_nodes_grad_fp16_buf, remote_nodes_grad_fp16_buf)
+            else:
+                handle = None
             
             # scatter gradient to local nodes
             # local_nodes_grad = SPMM_backward(local_adj_t, local_out_grad)
@@ -227,16 +243,24 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
             SPMM_backward(local_adj_t, local_out_grad, local_nodes_grad)
 
             # comm_handle.wait()
-            handle.wait()
+            if handle is not None:
+                handle.wait()
 
             if remote_nodes_grad_fp16_buf is not None and local_nodes_grad_fp16_buf is not None:
                 # convert communication data to fp32
                 local_nodes_grad_buf.copy_(local_nodes_grad_fp16_buf)
 
+            index_add_begin = time.perf_counter()
             # then accumulate the local node grads
             local_nodes_grad_from = local_nodes_grad_buf
-            local_nodes_grad.index_add_(dim=0, index=local_nodes_required_by_other,
-                                        source=local_nodes_grad_from)
+            if local_nodes_grad_from.size(0) != 0:
+                local_nodes_grad.index_add_(dim=0, index=local_nodes_required_by_other,
+                                            source=local_nodes_grad_from)
+
+            index_add_end = time.perf_counter()
+            print('#########')
+            print("Time of scatter gradient to local nodes(ms): {}".format((index_add_end - index_add_begin) * 1000.0))
+            print('#########')
 
         return None, None, local_nodes_grad, None, None, None, None, None, None, None
 
