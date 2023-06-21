@@ -14,6 +14,7 @@ from torch_geometric.nn.inits import zeros
 from torch_geometric.typing import Adj, OptTensor, PairTensor
 from torch_geometric.utils import add_remaining_self_loops
 from torch_geometric.utils.num_nodes import maybe_num_nodes
+from torch_geometric.nn.spmm_kernel import SPMM_forward, SPMM_backward
 
 import time
 
@@ -58,23 +59,6 @@ class DistributedGraph():
         self.buf_post_aggr_from.resize_(size_post_aggr_from)
         self.buf_post_aggr_to.resize_(size_post_aggr_to)
         self.buf_pre_aggr_to.resize_(size_pre_aggr_to)
-
-def SPMM_forward(src: SparseTensor, other: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
-    rowptr, col, value = src.csr()
-    if value is not None:
-        value = value.to(other.dtype)
-    return spmm_sum_without_backward(rowptr, col, value, other, out)
-
-def SPMM_backward(src: SparseTensor, other: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
-    # rowptr, col, value = src.csr()
-    # row = src.storage.row()
-    # csr2csc = src.storage.csr2csc()
-    colptr = src.storage.colptr()
-    # opt_value = value.view(-1, 1).index_select(0, csr2csc).view(-1)
-    row_T = src.storage.row_T()
-    value_T = src.storage.value_T()
-    # return spmm_sum_without_backward(colptr, row.index_select(0, csr2csc), opt_value, other)
-    return spmm_sum_without_backward(colptr, row_T, value_T, other, out)
 
 def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_indices_required_by_other, 
                                   recv_nodes_feat_splits, send_nodes_feat_splits,
