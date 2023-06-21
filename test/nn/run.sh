@@ -1,6 +1,6 @@
 #!/bin/sh
 
-#$-l rt_F=2
+#$-l rt_F=4
 #$-cwd
 #$-l h_rt=00:20:00
 
@@ -18,7 +18,7 @@ module load intel-mpi/2021.8
 # module load intel-mkl/2023.0.0
 export FI_PROVIDER=tcp
 
-node_num=2
+node_num=4
 graph_name=products
 
 # mpi run

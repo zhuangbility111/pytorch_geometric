@@ -223,6 +223,8 @@ def run_distributed_propogate(input_dir, graph_name):
         range_of_remote_nodes_on_local_graph, remote_nodes_num_from_each_subgraph, \
         local_edges_list, remote_edges_list = load_graph_data(input_dir, graph_name, rank, world_size)
 
+    nodes_feat_list.requires_grad = True
+
     # obtain the idx of local nodes required by other subgraph
     local_nodes_required_by_other, num_local_nodes_required_by_other = \
         obtain_local_nodes_required_by_other(local_nodes_list, remote_nodes_list, range_of_remote_nodes_on_local_graph, \
@@ -265,6 +267,7 @@ def run_local_propogate(input_dir, graph_name):
     nodes_list = pd.read_csv(os.path.join(input_dir, "..", "{}_nodes.txt".format(graph_name)), sep=" ", header=None, usecols=[2]).values
     # use numpy to load nodes feat with faster speed
     nodes_feat_list = torch.from_numpy(np.load(os.path.join(input_dir, "..", "{}_nodes_feat.npy".format(graph_name))).astype(np.float32))
+    nodes_feat_list.requires_grad = True
 
     num_nodes = nodes_list.shape[0]
 
@@ -339,6 +342,25 @@ def test_distributed_sage_conv_grad(input_dir, graph_name):
         print("rank = {}, rtol = {}, atol = {}, check output passed".format(rank, rtol, atol))
     else:
         print("rank = {}, rtol = {}, atol = {}, check output failed".format(rank, rtol, atol))
+
+    # ------ test backward ------
+    print("run distributed sage conv's backward function")
+    grad_out = torch.ones_like(ref_out)
+    ref_out.backward(grad_out)
+    # expected_grad_value = value.grad
+    # value.grad = None
+    expected_grad_other = global_feats.grad
+    print("rank = {}, expected_grad_other = {}".format(rank, expected_grad_other))
+
+    grad_out = torch.ones_like(out)
+    out.backward(grad_out)
+    grad_other = local_feats.grad
+    print("rank = {}, grad_other = {}".format(rank, grad_other))
+
+    if check_output(grad_other, expected_grad_other, cur_nodes_list, rank, rtol, atol):
+        print("rank = {}, rtol = {}, atol = {}, check output's gradient passed".format(rank, rtol, atol))
+    else:
+        print("rank = {}, rtol = {}, atol = {}, check output's gradient failed".format(rank, rtol, atol))
 
 
 if __name__ == "__main__":
