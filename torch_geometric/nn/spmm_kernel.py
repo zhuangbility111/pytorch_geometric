@@ -23,7 +23,7 @@ def distribute_work_for_row(rowptr: torch.Tensor, value: torch.Tensor, num_threa
             cur_flops_sum = flops_per_row[i]
     row_splits[-1] = num_rows
 
-    print(row_splits)
+    # print(row_splits)
     return row_splits
 
 def disribute_work_for_col(other: torch.Tensor,  num_threads_on_col: int):
@@ -38,7 +38,7 @@ def disribute_work_for_col(other: torch.Tensor,  num_threads_on_col: int):
         col_splits[i] = i * target_flops_on_cols
     col_splits[-1] = num_cols
 
-    print(col_splits)
+    # print(col_splits)
     return col_splits
     
 def SPMM_forward(src: torch.Tensor, other: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
