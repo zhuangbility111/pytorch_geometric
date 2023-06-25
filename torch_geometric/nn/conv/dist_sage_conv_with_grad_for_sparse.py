@@ -50,7 +50,7 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
     prepare_recv_node_begin = time.perf_counter()
 
     barrier_begin = time.perf_counter()
-    dist.barrier()
+    # dist.barrier()
 
     comm_begin = time.perf_counter()
     # handle = dist.all_to_all_single(recv_node_feats, send_node_feats, recv_node_feats_splits, send_node_feats_splits, async_op=True)
@@ -67,14 +67,14 @@ def comm_for_remote_nodes_forward(local_nodes_feat, local_nodes_required_by_othe
 
     comm_end = time.perf_counter()
 
-    print('$$$$')
-    print("Time of prepare send data(ms): {}".format((prepare_recv_node_begin - prepare_send_node_begin) * 1000.0))
-    print("Time of prepare recv data(ms): {}".format((barrier_begin - prepare_recv_node_begin) * 1000.0))
-    if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
-        print("transform data to fp16(ms): {}".format((transform_end - transform_begin) * 1000.0))
-    print("Time of barrier (all to all)(ms): {}".format((comm_begin - barrier_begin) * 1000.0))
-    print("Time of comm data (all to all)(ms): {}".format((comm_end - comm_begin) * 1000.0))
-    print('$$$$')
+    # print('$$$$')
+    # print("Time of prepare send data(ms): {}".format((prepare_recv_node_begin - prepare_send_node_begin) * 1000.0))
+    # print("Time of prepare recv data(ms): {}".format((barrier_begin - prepare_recv_node_begin) * 1000.0))
+    # if recv_nodes_feat_fp16_buf is not None and send_nodes_feat_fp16_buf is not None:
+    #     print("transform data to fp16(ms): {}".format((transform_end - transform_begin) * 1000.0))
+    # print("Time of barrier (all to all)(ms): {}".format((comm_begin - barrier_begin) * 1000.0))
+    # print("Time of comm data (all to all)(ms): {}".format((comm_end - comm_begin) * 1000.0))
+    # print('$$$$')
 
     # return recv_node_feats, handle
     # return None
@@ -138,22 +138,21 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                                             local_nodes_indices_required_by_other,
                                             remote_node_splits, local_node_splits)
         '''
-        send_nodes_feat_buf.zero_()
-        if num_send_nodes > 0 and num_recv_nodes > 0:
-            handle = comm_for_remote_nodes_forward(local_nodes_feat, 
-                                        local_nodes_required_by_other,
-                                        remote_node_splits, local_node_splits,
-                                        recv_nodes_feat_buf, send_nodes_feat_buf,
-                                        recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf)
-        else:
-            handle = None
+        # send_nodes_feat_buf.zero_()
+        handle = comm_for_remote_nodes_forward(local_nodes_feat, 
+                                    local_nodes_required_by_other,
+                                    remote_node_splits, local_node_splits,
+                                    recv_nodes_feat_buf, send_nodes_feat_buf,
+                                    recv_nodes_feat_fp16_buf, send_nodes_feat_fp16_buf)
         
         allocate_out_begin = time.perf_counter()
         out = torch.zeros([local_adj_t.sparse_size(0), local_nodes_feat.size(-1)], dtype=torch.float)
         local_aggregate_begin = time.perf_counter()
         # aggregate message from local nodes
         # local_out = SPMM_forward(local_adj_t, local_nodes_feat)
+
         SPMM_forward(local_adj_t, local_nodes_feat, out)
+        # out = matmul(local_adj_t, local_nodes_feat, "sum")
 
         async_wait_begin = time.perf_counter()
         if handle is not None:
@@ -179,16 +178,18 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
 
         sum_message_end = time.perf_counter()
 
-        print('#########')
-        print("Time of prepare comm_forward(ms): {}".format((comm_begin - prepare_comm_begin) * 1000.0))
-        print("Time of comm_forward(ms): {}".format((allocate_out_begin - comm_begin) * 1000.0))
-        print("Time of allocate out(ms): {}".format((local_aggregate_begin - allocate_out_begin) * 1000.0))
-        print("Time of local aggregate(ms): {}".format((async_wait_begin - local_aggregate_begin) * 1000.0))
-        print("Time of async wait(ms): {}".format((remote_aggregate_begin - async_wait_begin) * 1000.0))
-        print("Time of remote aggregate(ms): {}".format((sum_message_begin - remote_aggregate_begin) * 1000.0))
-        print("Time of sum up message(ms): {}".format((sum_message_end - sum_message_begin) * 1000.0))
-        print("Time of 1 dist conv forward(inner)(ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
-        print('#########')
+        # rank = dist.get_rank()
+        # if rank == 0:
+        #     print('#########')
+        #     print("Time of prepare comm_forward(ms): {}".format((comm_begin - prepare_comm_begin) * 1000.0))
+        #     print("Time of comm_forward(ms): {}".format((allocate_out_begin - comm_begin) * 1000.0))
+        #     print("Time of allocate out(ms): {}".format((local_aggregate_begin - allocate_out_begin) * 1000.0))
+        #     print("Time of local aggregate(ms): {}".format((async_wait_begin - local_aggregate_begin) * 1000.0))
+        #     print("Time of async wait(ms): {}".format((remote_aggregate_begin - async_wait_begin) * 1000.0))
+        #     print("Time of remote aggregate(ms): {}".format((sum_message_begin - remote_aggregate_begin) * 1000.0))
+        #     print("Time of sum up message(ms): {}".format((sum_message_end - sum_message_begin) * 1000.0))
+        #     print("Time of 1 dist conv forward(inner)(ms): {}".format((sum_message_end - prepare_comm_begin) * 1000.0))
+        #     print('#########')
 
         # return local_out
         return out
@@ -258,9 +259,11 @@ class Aggregate_for_local_and_remote(torch.autograd.Function):
                                             source=local_nodes_grad_from)
 
             index_add_end = time.perf_counter()
-            print('#########')
-            print("Time of scatter gradient to local nodes(ms): {}".format((index_add_end - index_add_begin) * 1000.0))
-            print('#########')
+            rank = dist.get_rank()
+            # if rank == 0:
+            #     print('#########')
+            #     print("Time of scatter gradient to local nodes(ms): {}".format((index_add_end - index_add_begin) * 1000.0))
+            #     print('#########')
 
         return None, None, local_nodes_grad, None, None, None, None, None, None, None
 
@@ -331,14 +334,14 @@ class DistSAGEConvGrad(MessagePassing):
             local_adj_t = all_edge_index
             remote_adj_t = kwargs['remote_edge_index']
 
-            propagate_begin = time.perf_counter()
+            # propagate_begin = time.perf_counter()
             local_out = aggregate_for_local_and_remote(local_adj_t, remote_adj_t, local_nodes_feat, 
                                             self.local_nodes_required_by_other, self.num_local_nodes_required_by_other,
                                             self.num_remote_nodes_from_part,
                                             self.send_nodes_feat_buf, self.recv_nodes_feat_buf,
                                             self.send_nodes_feat_fp16_buf, self.recv_nodes_feat_fp16_buf)
-            propagate_end = time.perf_counter()
-            print("Time of propagate(inner)(ms) = {}".format((propagate_end - propagate_begin) * 1000.0))
+            # propagate_end = time.perf_counter()
+            # print("Time of propagate(inner)(ms) = {}".format((propagate_end - propagate_begin) * 1000.0))
 
             return local_out
 
@@ -369,13 +372,15 @@ class DistSAGEConvGrad(MessagePassing):
 
         add_bias_end = time.perf_counter()
 
-        print("**************")
-        # print("Time of norm(ms): {}".format((linear_begin - norm_begin) * 1000.0))
-        print("Time of linear(ms): {}".format((propagate_begin -linear_begin) * 1000.0))
-        print("Time of propagate(ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
-        print("Time of add_bias(ms): {}".format((add_bias_end - add_bias_begin) * 1000.0))
-        print("Time of 1 dist conv forward(ms): {}".format((add_bias_end - norm_begin) * 1000.0))
-        print("**************")
+        # rank = dist.get_rank()
+        # if rank == 0:
+        #     print("**************")
+        #     # print("Time of norm(ms): {}".format((linear_begin - norm_begin) * 1000.0))
+        #     print("Time of linear(ms): {}".format((propagate_begin -linear_begin) * 1000.0))
+        #     print("Time of propagate(ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
+        #     # print("Time of add_bias(ms): {}".format((add_bias_end - add_bias_begin) * 1000.0))
+        #     print("Time of 1 dist conv forward(ms): {}".format((add_bias_end - norm_begin) * 1000.0))
+        #     print("**************")
 
         return out
 

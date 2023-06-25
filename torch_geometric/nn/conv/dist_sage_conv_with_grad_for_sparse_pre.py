@@ -73,7 +73,7 @@ class DistributedAggregation(torch.autograd.Function):
         SPMM_forward(graph.adj_t_pre_post_aggr_to, local_nodes_feat, graph.buf_pre_post_aggr_to)
 
         barrier_begin = time.perf_counter()
-        dist.barrier()
+        # dist.barrier()
 
         comm_pre_aggr_to_begin = time.perf_counter()
         # communication in fp16
@@ -103,16 +103,18 @@ class DistributedAggregation(torch.autograd.Function):
             SPMM_forward(graph.adj_t_pre_post_aggr_from, graph.buf_pre_post_aggr_from, out)
         post_aggr_from_end = time.perf_counter()
  
-        print('$$$$')
-        # print("Time of resize buffer(ms): {}".format((create_out_memory_begin - resize_buffer_begin) * 1000.0))
-        print("Time of create out memory(ms): {}".format((pre_aggr_to_begin - create_out_memory_begin) * 1000.0))
-        print("Time of pre_aggr_to (ms): {}".format((barrier_begin - pre_aggr_to_begin) * 1000.0))
-        print("Time of barrier (ms): {}".format((comm_pre_aggr_to_begin - barrier_begin) * 1000.0))
-        print("Time of comm pre_aggr_to result (ms): {}".format((local_aggr_begin - comm_pre_aggr_to_begin) * 1000.0))
-        print("Time of local aggr (ms): {}".format((async_wait_begin - local_aggr_begin) * 1000.0))
-        print("Time of async wait (ms): {}".format((post_aggr_from_begin - async_wait_begin) * 1000.0))
-        print("Time of post_aggr_from (ms): {}".format((post_aggr_from_end - post_aggr_from_begin) * 1000.0))
-        print('$$$$')
+        # rank = dist.get_rank()
+        # if rank == 0:
+        #     print('$$$$')
+        #     # print("Time of resize buffer(ms): {}".format((create_out_memory_begin - resize_buffer_begin) * 1000.0))
+        #     print("Time of create out memory(ms): {}".format((pre_aggr_to_begin - create_out_memory_begin) * 1000.0))
+        #     print("Time of pre_aggr_to (ms): {}".format((barrier_begin - pre_aggr_to_begin) * 1000.0))
+        #     print("Time of barrier (ms): {}".format((comm_pre_aggr_to_begin - barrier_begin) * 1000.0))
+        #     print("Time of comm pre_aggr_to result (ms): {}".format((local_aggr_begin - comm_pre_aggr_to_begin) * 1000.0))
+        #     print("Time of local aggr (ms): {}".format((async_wait_begin - local_aggr_begin) * 1000.0))
+        #     print("Time of async wait (ms): {}".format((post_aggr_from_begin - async_wait_begin) * 1000.0))
+        #     print("Time of post_aggr_from (ms): {}".format((post_aggr_from_end - post_aggr_from_begin) * 1000.0))
+        #     print('$$$$')
 
         return out
         
@@ -214,13 +216,15 @@ class DistSAGEConvGradWithPre(MessagePassing):
 
         add_bias_end = time.perf_counter()
 
-        print("**************")
-        # print("Time of norm(ms): {}".format((linear_begin - norm_begin) * 1000.0))
-        print("Time of linear(ms): {}".format((propagate_begin -linear_begin) * 1000.0))
-        print("Time of propagate(ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
-        # print("Time of add_bias(ms): {}".format((add_bias_end - add_bias_begin) * 1000.0))
-        # print("Time of 1 dist conv forward(ms): {}".format((add_bias_end - norm_begin) * 1000.0))
-        print("**************")
+        # rank = dist.get_rank()
+        # if rank == 0:
+        #     print("**************")
+        #     # print("Time of norm(ms): {}".format((linear_begin - norm_begin) * 1000.0))
+        #     print("Time of linear(ms): {}".format((propagate_begin -linear_begin) * 1000.0))
+        #     print("Time of propagate(ms): {}".format((add_bias_begin - propagate_begin) * 1000.0))
+        #     # print("Time of add_bias(ms): {}".format((add_bias_end - add_bias_begin) * 1000.0))
+        #     print("Time of 1 dist conv forward(ms): {}".format((add_bias_end - norm_begin) * 1000.0))
+        #     print("**************")
 
         return out
 
